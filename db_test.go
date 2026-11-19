@@ -1693,6 +1693,87 @@ func TestMemTableRecycleMinSize(t *testing.T) {
 	}
 }
 
+func TestDisableMemTableCacheReservation(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	for _, disable := range []bool{false, true} {
+		t.Run(fmt.Sprintf("disable=%t", disable), func(t *testing.T) {
+			// One shard, so the reservation is not rounded up per shard.
+			c := cache.NewWithShards(128<<10 /* 128 KB */, 1)
+			defer c.Unref()
+			opts := &Options{
+				// Large enough that the large batch below does not stall writes
+				// while flushes are blocked.
+				MemTableSize:                    4 << 20,
+				Cache:                           c,
+				DisableTableStats:               true,
+				DisableMemTableCacheReservation: disable,
+				FS:                              vfs.NewMem(),
+			}
+
+			// Add a block to the cache. The first memtable (initialMemTableSize)
+			// is larger than the cache, so reserving it evicts the block.
+			helloWorld := []byte("hello world")
+			value := cache.Alloc(len(helloWorld))
+			copy(value.RawBuffer(), helloWorld)
+			tmpHandle := c.NewHandle()
+			defer tmpHandle.Close()
+			tmpHandle.Set(base.DiskFileNum(0), 0, value)
+			value.Release()
+
+			d, err := Open("", opts)
+			require.NoError(t, err)
+
+			checkReserved := func(expected int64) {
+				t.Helper()
+				if disable {
+					expected = 0
+				}
+				require.Equal(t, expected, c.ReservedForTesting())
+			}
+
+			cv := tmpHandle.Peek(base.DiskFileNum(0), 0, base.MakeLevel(0), cache.CategoryBackground)
+			require.Equal(t, disable, cv != nil)
+			if cv != nil {
+				cv.Release()
+			}
+			// The memtable accounting does not depend on the option.
+			require.Equal(t, int64(initialMemTableSize), d.memTableReserved.Load())
+			checkReserved(initialMemTableSize)
+
+			// The flushed memtable is kept for reuse along with its reservation.
+			require.NoError(t, d.Set([]byte("a"), []byte("b"), nil))
+			require.NoError(t, d.Flush())
+			require.Equal(t, int64(2*initialMemTableSize), d.memTableReserved.Load())
+			checkReserved(2 * initialMemTableSize)
+
+			// A large batch is queued as its own flushable and reserves its size
+			// until it is flushed.
+			d.mu.Lock()
+			d.mu.compact.flushing = true
+			d.mu.Unlock()
+			require.NoError(t, d.Set([]byte("a"), bytes.Repeat([]byte("v"), int(d.largeBatchThreshold)), nil))
+			d.mu.Lock()
+			var batchBytes int64
+			for _, e := range d.mu.mem.queue {
+				if fb, ok := e.flushable.(*flushableBatch); ok {
+					batchBytes += int64(fb.totalBytes())
+				}
+			}
+			d.mu.compact.flushing = false
+			d.mu.Unlock()
+			require.NotZero(t, batchBytes)
+			checkReserved(d.memTableReserved.Load() + batchBytes)
+
+			// Flushing releases the batch's reservation.
+			require.NoError(t, d.Flush())
+			checkReserved(d.memTableReserved.Load())
+
+			require.NoError(t, d.Close())
+			require.Zero(t, c.ReservedForTesting())
+		})
+	}
+}
+
 func TestMemTableReservationLeak(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	d, err := Open("", testingRandomized(t, &Options{FS: vfs.NewMem()}))

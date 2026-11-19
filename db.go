@@ -256,8 +256,11 @@ type DB struct {
 	// present in DB.mu.mem.queue, as well as memtables that have been flushed
 	// but are still referenced by an inuse readState, as well as up to one
 	// memTable waiting to be reused and stored in d.memTableRecycle.
-	memTableCount    atomic.Int64
-	memTableReserved atomic.Int64 // number of bytes reserved in the cache for memtables
+	memTableCount atomic.Int64
+	// memTableReserved is the number of bytes allocated for memtables. The same
+	// amount is reserved in the block cache, unless
+	// Options.DisableMemTableCacheReservation is set.
+	memTableReserved atomic.Int64
 	// memTableRecycle holds a pointer to an obsolete memtable. The next
 	// memtable allocation will reuse this memtable if it has not already been
 	// recycled.
@@ -2337,7 +2340,7 @@ func (d *DB) newMemTable(
 	} else {
 		mem = new(memTable)
 		memtblOpts.arenaBuf = manual.New(manual.MemTable, uintptr(size))
-		memtblOpts.releaseAccountingReservation = d.opts.Cache.Reserve(int(size))
+		memtblOpts.releaseAccountingReservation = d.reserveMemTableMemory(int(size))
 		d.memTableCount.Add(1)
 		d.memTableReserved.Add(int64(size))
 
@@ -2371,6 +2374,17 @@ func (d *DB) newMemTable(
 		}
 	}
 	return mem, entry
+}
+
+// reserveMemTableMemory reserves n bytes of memtable memory in the block cache
+// and returns the func that releases the reservation. If
+// Options.DisableMemTableCacheReservation is set, nothing is reserved and the
+// returned func does nothing.
+func (d *DB) reserveMemTableMemory(n int) func() {
+	if d.opts.DisableMemTableCacheReservation {
+		return func() {}
+	}
+	return d.opts.Cache.Reserve(n)
 }
 
 func (d *DB) freeMemTable(m *memTable) {
@@ -2524,7 +2538,7 @@ func (d *DB) makeRoomForWrite(b *Batch) error {
 			entry := d.newFlushableEntry(b.flushable, imm.logNum, b.SeqNum())
 			// The large batch is by definition large. Reserve space from the cache
 			// for it until it is flushed.
-			entry.releaseMemAccounting = d.opts.Cache.Reserve(int(b.flushable.totalBytes()))
+			entry.releaseMemAccounting = d.reserveMemTableMemory(int(b.flushable.totalBytes()))
 			d.mu.mem.cumulativeImmutableFlushableInuseBytes += b.flushable.inuseBytes()
 			d.mu.mem.queue = append(d.mu.mem.queue, entry)
 		} else {

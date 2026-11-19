@@ -1001,6 +1001,16 @@ type Options struct {
 	// The default value is 0: every flushed memtable may be kept for reuse.
 	MemTableRecycleMinSize uint64
 
+	// DisableMemTableCacheReservation stops memtables and large batches queued
+	// for flush from reserving their memory in the block cache. Normally the
+	// block cache shrinks by the size of every memtable, so the memtables and
+	// the cache together stay within Cache's size. With this set, memtable
+	// memory is not counted against the cache, and the cache can hold its full
+	// size of blocks on top of the memtables.
+	//
+	// Memtable memory is still reported in Metrics.MemTable.
+	DisableMemTableCacheReservation bool
+
 	// Hard limit on the number of queued of MemTables. Writes are stopped when
 	// the sum of the queued memtable sizes exceeds:
 	//   MemTableStopWritesThreshold * MemTableSize.
