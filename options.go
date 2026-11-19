@@ -987,6 +987,20 @@ type Options struct {
 	// The default value is 4MB.
 	MemTableSize uint64
 
+	// MemTableRecycleMinSize is the smallest memtable that is kept for reuse
+	// after it is flushed. Normally the DB keeps one flushed memtable, with its
+	// buffer and its block cache reservation, so the next memtable of the same
+	// size can reuse it instead of allocating a new buffer. A flushed memtable
+	// smaller than MemTableRecycleMinSize is freed right away instead.
+	//
+	// Reuse helps when large allocations are slow (we've seen 64MB allocations
+	// take 10ms+), but it doubles the memtable memory of an idle DB. With many
+	// DBs sharing one block cache, those spare memtables can take up most of
+	// the cache.
+	//
+	// The default value is 0: every flushed memtable may be kept for reuse.
+	MemTableRecycleMinSize uint64
+
 	// Hard limit on the number of queued of MemTables. Writes are stopped when
 	// the sum of the queued memtable sizes exceeds:
 	//   MemTableStopWritesThreshold * MemTableSize.

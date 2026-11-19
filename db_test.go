@@ -1638,6 +1638,61 @@ func TestMemTableReservation(t *testing.T) {
 	require.NoError(t, d.Close())
 }
 
+func TestMemTableRecycleMinSize(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	const memTableSize = initialMemTableSize
+	testCases := []struct {
+		minSize uint64
+		recycle bool
+	}{
+		{minSize: 0, recycle: true},
+		{minSize: memTableSize, recycle: true},
+		{minSize: memTableSize + 1, recycle: false},
+		{minSize: 32 << 20, recycle: false},
+	}
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("min=%d", tc.minSize), func(t *testing.T) {
+			opts := &Options{
+				DisableTableStats:      true,
+				MemTableSize:           memTableSize,
+				MemTableRecycleMinSize: tc.minSize,
+				FS:                     vfs.NewMem(),
+			}
+			d, err := Open("", opts)
+			require.NoError(t, err)
+
+			check := func(expectedZombies int64) {
+				t.Helper()
+				m := d.Metrics()
+				require.Equal(t, expectedZombies, m.MemTable.ZombieCount)
+				require.Equal(t, uint64(expectedZombies)*memTableSize, m.MemTable.ZombieSize)
+				require.Equal(t, (1+expectedZombies)*memTableSize, d.memTableReserved.Load())
+			}
+			var recycled int64
+			if tc.recycle {
+				recycled = 1
+			}
+
+			check(0)
+			for range 3 {
+				require.NoError(t, d.Set([]byte("a"), []byte("b"), nil))
+				require.NoError(t, d.Flush())
+				check(recycled)
+			}
+
+			// A memtable pinned by an iterator is released when the iterator is
+			// closed, and must follow the same rule.
+			iter, _ := d.NewIter(nil)
+			require.NoError(t, d.Flush())
+			require.NoError(t, d.Flush())
+			require.NoError(t, iter.Close())
+			check(recycled)
+
+			require.NoError(t, d.Close())
+		})
+	}
+}
+
 func TestMemTableReservationLeak(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	d, err := Open("", testingRandomized(t, &Options{FS: vfs.NewMem()}))

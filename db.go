@@ -2355,6 +2355,12 @@ func (d *DB) newMemTable(
 			d.freeMemTable(mem)
 			return
 		}
+		// Small memtables are cheap to allocate, so they are not worth keeping
+		// around for reuse. See Options.MemTableRecycleMinSize.
+		if uint64(mem.arenaBuf.Len()) < d.opts.MemTableRecycleMinSize {
+			d.freeMemTable(mem)
+			return
+		}
 
 		// The next memtable allocation might be able to reuse this memtable.
 		// Stash it on d.memTableRecycle.
