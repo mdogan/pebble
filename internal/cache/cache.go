@@ -210,17 +210,6 @@ func (c *Cache) Reserve(n int) func() {
 	}
 }
 
-// ReservedForTesting returns the total size currently reserved with Reserve.
-func (c *Cache) ReservedForTesting() int64 {
-	var n int64
-	for i := range c.shards {
-		c.shards[i].mu.RLock()
-		n += c.shards[i].reservedSize
-		c.shards[i].mu.RUnlock()
-	}
-	return n
-}
-
 // MaxSize returns the max size of the cache.
 func (c *Cache) MaxSize() int64 {
 	return c.maxSize

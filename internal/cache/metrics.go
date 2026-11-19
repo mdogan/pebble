@@ -85,6 +85,11 @@ type Metrics struct {
 	Size int64
 	// The current count of objects (blocks or tables) in the cache.
 	Count int64
+	// Reserved is the number of bytes currently reserved with Reserve, for
+	// example by memtables and by large batches waiting to be flushed. The
+	// cache keeps at most MaxSize-Reserved bytes of blocks. Each reservation is
+	// rounded up to a multiple of the number of shards.
+	Reserved int64
 	// Recent contains cache hit metrics covering two recent periods (last ~10
 	// minutes and last ~1 hour).
 	Recent [2]struct {
@@ -165,6 +170,7 @@ func (c *Cache) Metrics() Metrics {
 		s.mu.RLock()
 		m.Count += int64(s.blocks.Len())
 		m.Size += s.sizeHot + s.sizeCold
+		m.Reserved += s.reservedSize
 		s.mu.RUnlock()
 	}
 	m.Recent[0].HitsAndMisses, m.Recent[0].Since = c.metricsWindow.TenMinutesAgo()

@@ -37,6 +37,47 @@ import (
 // CacheMetrics holds metrics for the block and file cache.
 type CacheMetrics = cache.Metrics
 
+// ManualMemoryMetrics holds the bytes that Pebble has allocated outside the Go
+// heap (with C malloc), by purpose. The numbers cover all DBs and caches in the
+// process. They are the sum of the allocation sizes and do not include
+// allocator overhead or fragmentation.
+type ManualMemoryMetrics struct {
+	// BlockCacheData is the bytes of block contents held by block caches.
+	BlockCacheData uint64
+	// BlockCacheMap is the bytes of the block caches' hash maps.
+	BlockCacheMap uint64
+	// BlockCacheEntry is the bytes of the block caches' entries.
+	BlockCacheEntry uint64
+	// MemTables is the bytes of memtable buffers: mutable and immutable
+	// memtables, flushed memtables still used by readers, and memtables kept for
+	// reuse. Large batches waiting to be flushed live in the Go heap and are not
+	// included.
+	MemTables uint64
+}
+
+// BlockCache returns the total bytes used by block caches.
+func (m ManualMemoryMetrics) BlockCache() uint64 {
+	return m.BlockCacheData + m.BlockCacheMap + m.BlockCacheEntry
+}
+
+// Total returns the total bytes allocated outside the Go heap.
+func (m ManualMemoryMetrics) Total() uint64 {
+	return m.BlockCache() + m.MemTables
+}
+
+// GetManualMemoryMetrics returns the bytes that Pebble currently has allocated
+// outside the Go heap in this process. It only reads a few atomic counters, so
+// it is cheap to call often.
+func GetManualMemoryMetrics() ManualMemoryMetrics {
+	m := manual.GetMetrics()
+	return ManualMemoryMetrics{
+		BlockCacheData:  m[manual.BlockCacheData].InUseBytes,
+		BlockCacheMap:   m[manual.BlockCacheMap].InUseBytes,
+		BlockCacheEntry: m[manual.BlockCacheEntry].InUseBytes,
+		MemTables:       m[manual.MemTable].InUseBytes,
+	}
+}
+
 // FilterMetrics holds metrics for the filter policy
 type FilterMetrics = sstable.FilterMetrics
 

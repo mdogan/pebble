@@ -230,8 +230,11 @@ func TestReserve(t *testing.T) {
 	setTestValue(h1, 0, 0, "a", 1)
 	setTestValue(h2, 0, 0, "a", 1)
 	require.EqualValues(t, 2, cache.Size())
+	require.EqualValues(t, 0, cache.Metrics().Reserved)
 	r := cache.Reserve(1)
 	require.EqualValues(t, 0, cache.Size())
+	// The reservation is rounded up to one byte per shard.
+	require.EqualValues(t, 2, cache.Metrics().Reserved)
 
 	setTestValue(h1, 0, 0, "a", 1)
 	setTestValue(h2, 0, 0, "a", 1)
@@ -239,6 +242,7 @@ func TestReserve(t *testing.T) {
 	setTestValue(h4, 0, 0, "a", 1)
 	require.EqualValues(t, 2, cache.Size())
 	r()
+	require.EqualValues(t, 0, cache.Metrics().Reserved)
 	require.EqualValues(t, 2, cache.Size())
 	setTestValue(h1, 0, 0, "a", 1)
 	setTestValue(h2, 0, 0, "a", 1)

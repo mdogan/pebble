@@ -1728,7 +1728,7 @@ func TestDisableMemTableCacheReservation(t *testing.T) {
 				if disable {
 					expected = 0
 				}
-				require.Equal(t, expected, c.ReservedForTesting())
+				require.Equal(t, expected, c.Metrics().Reserved)
 			}
 
 			cv := tmpHandle.Peek(base.DiskFileNum(0), 0, base.MakeLevel(0), cache.CategoryBackground)
@@ -1769,9 +1769,41 @@ func TestDisableMemTableCacheReservation(t *testing.T) {
 			checkReserved(d.memTableReserved.Load())
 
 			require.NoError(t, d.Close())
-			require.Zero(t, c.ReservedForTesting())
+			require.Zero(t, c.Metrics().Reserved)
 		})
 	}
+}
+
+func TestManualMemoryMetrics(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	// The counters are global to the process, so check how they change.
+	base := GetManualMemoryMetrics().MemTables
+	checkMemTables := func(expected uint64) {
+		t.Helper()
+		require.Equal(t, base+expected, GetManualMemoryMetrics().MemTables)
+	}
+
+	d, err := Open("", &Options{
+		DisableTableStats: true,
+		MemTableSize:      initialMemTableSize,
+		FS:                vfs.NewMem(),
+	})
+	require.NoError(t, err)
+	checkMemTables(initialMemTableSize)
+
+	// The flushed memtable is kept for reuse and still counts.
+	require.NoError(t, d.Set([]byte("a"), []byte("b"), nil))
+	require.NoError(t, d.Flush())
+	checkMemTables(2 * initialMemTableSize)
+	m := d.Metrics()
+	require.Equal(t, base+m.MemTable.Size+m.MemTable.ZombieSize, GetManualMemoryMetrics().MemTables)
+
+	require.NoError(t, d.Close())
+	checkMemTables(0)
+
+	mm := GetManualMemoryMetrics()
+	require.Equal(t, mm.BlockCacheData+mm.BlockCacheMap+mm.BlockCacheEntry, mm.BlockCache())
+	require.Equal(t, mm.BlockCache()+mm.MemTables, mm.Total())
 }
 
 func TestMemTableReservationLeak(t *testing.T) {
